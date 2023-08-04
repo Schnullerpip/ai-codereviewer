@@ -104,6 +104,7 @@ function createPrompt(file: File, chunk: Chunk, prDetails: PRDetails): string {
 - Write the comment in GitHub Markdown format.
 - Use the given description only for the overall context and only comment the code.
 - IMPORTANT: NEVER suggest adding comments to the code.
+- don't comment on versions e.g. libraries, dependencies because your training data is limited.
 
 Review the following code diff in the file "${
     file.to
