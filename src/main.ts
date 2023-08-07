@@ -61,8 +61,8 @@ async function getDiff(
 async function analyzeCode(
   parsedDiff: File[],
   prDetails: PRDetails
-): Promise<Array<{ body: string; path: string; line: number }>> {
-  const comments: Array<{ body: string; path: string; line: number }> = [];
+): Promise<Array<{ body: string; path: string; line: number; importance: number }>> {
+  const comments: Array<{ body: string; path: string; line: number; importance: number }> = [];
 
   for (const file of parsedDiff) {
     if (file.to === "/dev/null") continue; // Ignore deleted files
@@ -81,8 +81,9 @@ async function analyzeCode(
 }
 
 function createPrompt(file: File, chunk: Chunk, prDetails: PRDetails): string {
-  return `You are an expert software engineer. Your task is to review pull requests. Instructions:
-- Provide the response in following JSON format:  [{"lineNumber":  <line_number>, "reviewComment": "<review comment>"}]
+  return `Your task is to code review pull requests. Instructions:
+- Provide the response in following JSON format:  [{"lineNumber":  <line_number>, "reviewComment": "<review comment>", "importance":<importance_ranking>}]
+- The importance_ranking is a number between 1 and 5, where 5 is the most important and 1 is the least important.
 - Do not give positive comments or compliments.
 - Do not suggest renamings
 - Focus on logic errors, bugs, performance and control flow readability only.
@@ -118,6 +119,7 @@ ${chunk.changes
 async function getAIResponse(prompt: string): Promise<Array<{
   lineNumber: string;
   reviewComment: string;
+  importance: number
 }> | null> {
   const queryConfig = {
     model: OPENAI_API_MODEL,
@@ -133,7 +135,11 @@ async function getAIResponse(prompt: string): Promise<Array<{
       ...queryConfig,
       messages: [
         {
-          role: "system",
+          role: 'system',
+          content: 'You are an expert software engineer specialized in doing code reviews.',
+        },
+        {
+          role: "user",
           content: prompt,
         },
       ],
@@ -153,8 +159,9 @@ function createComment(
   aiResponses: Array<{
     lineNumber: string;
     reviewComment: string;
+    importance: number
   }>
-): Array<{ body: string; path: string; line: number }> {
+): Array<{ body: string; path: string; line: number; importance: number }> {
   return aiResponses.flatMap((aiResponse) => {
     if (!file.to) {
       return [];
@@ -163,6 +170,7 @@ function createComment(
       body: aiResponse.reviewComment,
       path: file.to,
       line: Number(aiResponse.lineNumber),
+      importance: aiResponse.importance ?? 1
     };
   });
 }
@@ -238,11 +246,14 @@ async function main() {
     return
   }
 
+  const commentsSortedByImportanceDesc = comments.sort((a, b) => b.importance - a.importance)
+  const commentsCapped = commentsSortedByImportanceDesc.slice(0, 15)
+
   await createReview(
     prDetails.owner,
     prDetails.repo,
     prDetails.pull_number,
-    comments
+    commentsCapped
   );
 }
 
