@@ -167,7 +167,7 @@ function createComment(
   });
 }
 
-async function createReviewComment(
+async function createReview(
   owner: string,
   repo: string,
   pull_number: number,
@@ -235,7 +235,7 @@ async function main() {
 
   const comments = await analyzeCode(filteredDiff, prDetails);
   if (comments.length > 0) {
-    await createReviewComment(
+    await createReview(
       prDetails.owner,
       prDetails.repo,
       prDetails.pull_number,
