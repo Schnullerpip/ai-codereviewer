@@ -56,6 +56,44 @@ const configuration = new openai_1.Configuration({
     apiKey: OPENAI_API_KEY,
 });
 const openai = new openai_1.OpenAIApi(configuration);
+const systemPrompt = `You are an expert software engineer specialized in doing code reviews. Complete every element of the array.
+Your task is to code review pull requests. Instructions:
+- Provide the response in following JSON format:  {"lineNumber":  <line_number>, "reviewComment": "<review comment>", "importance":<importance_ranking>};;;
+- The importance_ranking is a number between 1 and 5, where 5 is the most important and 1 is the least important.
+- Do not give positive comments or compliments.
+- Do not suggest renamings
+- Focus on logic errors, bugs, performance and control flow readability only.
+- Provide comments and suggestions ONLY if there is something to improve, otherwise return an empty array.
+- Write the comment in GitHub Markdown format.
+- Use the given description only for the overall context and only comment the code.
+- IMPORTANT: NEVER suggest adding comments to the code.
+- don't comment on versions e.g. libraries, dependencies because your training data is limited.
+- don't just assume that something has been forgotten.
+
+Pull request title: feat/improve performance
+Pull request description: 
+
+---
+This PR improves the performance of the application by using a more efficient algorithm.
+---
+
+Git diff to review:
+
+\`\`\`diff
+@@ -17,13 +17,16 @@
+17 -invokeInefficientAlgorithm()
+17 invokeEfficientAlgorithm()
+18 console.log('test log')
+\`\`\`
+{"lineNumber": 18, "reviewComment": "remove this console.log, as it appears to be a debug log", "importance": 2};;;
+`;
+const queryConfig = {
+    model: OPENAI_API_MODEL,
+    temperature: 0.2,
+    top_p: 1,
+    frequency_penalty: 0,
+    presence_penalty: 0,
+};
 function getPRDetails() {
     var _a, _b;
     return __awaiter(this, void 0, void 0, function* () {
@@ -92,43 +130,27 @@ function analyzeCode(parsedDiff, prDetails) {
         for (const file of parsedDiff) {
             if (file.to === "/dev/null")
                 continue; // Ignore deleted files
+            console.log('[AICODEREVIEWER::ANALYZING]::', file.to);
+            const prompts = [];
             for (const chunk of file.chunks) {
                 const prompt = createPrompt(file, chunk, prDetails);
-                const aiResponse = yield getAIResponse(prompt);
-                if (aiResponse) {
-                    const newComments = createComment(file, chunk, aiResponse);
-                    if (newComments) {
-                        comments.push(...newComments);
-                    }
-                }
+                prompts.push(prompt);
+            }
+            const aiResponse = yield getAIResponse(prompts);
+            if (aiResponse.length === 0) {
+                console.log('AICODEREVIEWER::No AI response for file', file.to);
+                continue;
+            }
+            const newComments = createComments(file, aiResponse);
+            if (newComments) {
+                comments.push(...newComments);
             }
         }
         return comments;
     });
 }
-function getBaseAndHeadShas(owner, repo, pull_number) {
-    return __awaiter(this, void 0, void 0, function* () {
-        const prResponse = yield octokit.pulls.get({
-            owner,
-            repo,
-            pull_number,
-        });
-        return {
-            baseSha: prResponse.data.base.sha,
-            headSha: prResponse.data.head.sha,
-        };
-    });
-}
 function createPrompt(file, chunk, prDetails) {
-    return `Your task is to review pull requests. Instructions:
-- Provide the response in following JSON format:  [{"lineNumber":  <line_number>, "reviewComment": "<review comment>"}]
-- Do not give positive comments or compliments.
-- Provide comments and suggestions ONLY if there is something to improve, otherwise return an empty array.
-- Write the comment in GitHub Markdown format.
-- Use the given description only for the overall context and only comment the code.
-- IMPORTANT: NEVER suggest adding comments to the code.
-
-Review the following code diff in the file "${file.to}" and take the pull request title and description into account when writing the response.
+    return ` Review the following code diff in the file "${file.to}" and take the pull request title and description into account when writing the response.
   
 Pull request title: ${prDetails.title}
 Pull request description:
@@ -148,46 +170,65 @@ ${chunk.changes
 \`\`\`
 `;
 }
-function getAIResponse(prompt) {
-    var _a, _b;
+/**
+ * Try joining the prompts together for batching
+ * see https://community.openai.com/t/batching-with-chatcompletion-endpoint/137723
+ */
+function getAIResponse(prompts) {
+    var _a, _b, _c;
     return __awaiter(this, void 0, void 0, function* () {
-        const queryConfig = {
-            model: OPENAI_API_MODEL,
-            temperature: 0.2,
-            max_tokens: 700,
-            top_p: 1,
-            frequency_penalty: 0,
-            presence_penalty: 0,
-        };
-        try {
-            const response = yield openai.createChatCompletion(Object.assign(Object.assign({}, queryConfig), { messages: [
-                    {
-                        role: "system",
-                        content: prompt,
-                    },
-                ] }));
-            const res = ((_b = (_a = response.data.choices[0].message) === null || _a === void 0 ? void 0 : _a.content) === null || _b === void 0 ? void 0 : _b.trim()) || "[]";
-            return JSON.parse(res);
-        }
-        catch (error) {
-            console.error("Error:", error);
-            return null;
-        }
-    });
-}
-function createComment(file, chunk, aiResponses) {
-    return aiResponses.flatMap((aiResponse) => {
-        if (!file.to) {
+        const joinedPrompts = prompts.join(";\n\n");
+        console.log('[AICODEREVIEWER::PROMPTS]::', prompts);
+        console.log('[AICODEREVIEWER::JOINEDPROMPTS]::----\n\n', joinedPrompts, '\n\n----');
+        const response = yield openai.createChatCompletion(Object.assign(Object.assign({}, queryConfig), { messages: [
+                {
+                    role: "system",
+                    content: systemPrompt,
+                },
+                {
+                    role: "user",
+                    content: joinedPrompts,
+                },
+            ] }));
+        console.log('[AICODEREVIEWER::OPENAI::RESPONSE]::"', (_a = response.data.choices[0].message) === null || _a === void 0 ? void 0 : _a.content, '"');
+        const res = (_c = (_b = response.data.choices[0].message) === null || _b === void 0 ? void 0 : _b.content) === null || _c === void 0 ? void 0 : _c.trim().split(";;;");
+        if (!res) {
+            console.log("[AICODEREVIEWER::]::Response not interpretable. ", res);
             return [];
         }
-        return {
-            body: aiResponse.reviewComment,
-            path: file.to,
-            line: Number(aiResponse.lineNumber),
-        };
+        if (res[res.length - 1] === ';;;') {
+            const removed = res.pop();
+            console.log('[AICODEREVIEWER::REMOVED]::"', removed, '"');
+        }
+        console.log('[AICODEREVIEWER::INTERPRETED]::"', res);
+        try {
+            return res.map((r) => JSON.parse(r));
+        }
+        catch (e) {
+            return [];
+        }
     });
 }
-function createReviewComment(owner, repo, pull_number, comments) {
+function createComments(file, aiResponses) {
+    return aiResponses.flatMap((aiResponse) => {
+        var _a;
+        if (!file.to) {
+            return undefined;
+        }
+        const line = Number(aiResponse.lineNumber);
+        if (Number.isNaN(line)) {
+            console.log('[AICODEREVIEWER]::CERATECOMMENTS::', aiResponse.lineNumber, 'is not a number');
+            return undefined;
+        }
+        return {
+            body: '[AI_REVIEWER]::' + aiResponse.reviewComment,
+            path: file.to,
+            line,
+            importance: (_a = aiResponse.importance) !== null && _a !== void 0 ? _a : 1,
+        };
+    }).filter((c) => c !== undefined);
+}
+function createReview(owner, repo, pull_number, comments) {
     return __awaiter(this, void 0, void 0, function* () {
         yield octokit.pulls.createReview({
             owner,
@@ -238,9 +279,18 @@ function main() {
             return !excludePatterns.some((pattern) => { var _a; return (0, minimatch_1.default)((_a = file.to) !== null && _a !== void 0 ? _a : "", pattern); });
         });
         const comments = yield analyzeCode(filteredDiff, prDetails);
-        if (comments.length > 0) {
-            yield createReviewComment(prDetails.owner, prDetails.repo, prDetails.pull_number, comments);
+        if (comments.length <= 0) {
+            return;
         }
+        const commentsSortedByImportanceDesc = comments.sort((a, b) => b.importance - a.importance);
+        const commentsCapped = commentsSortedByImportanceDesc.slice(0, 15);
+        const commentsForOctokit = commentsCapped.map((c) => ({
+            body: c.body,
+            path: c.path,
+            line: c.line,
+            //no importance
+        }));
+        yield createReview(prDetails.owner, prDetails.repo, prDetails.pull_number, commentsForOctokit);
     });
 }
 main().catch((error) => {
