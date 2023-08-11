@@ -9,7 +9,8 @@
     "build": "tsc",
     "package": "ncc build --source-map --license licenses.txt",
     "format": "prettier --write .",
-    "lint": "prettier --check ."
+    "lint": "prettier --check .",
+    "deploy": "npm run build && npm run package && git commit -a -m \"package\" && git push"
   },
   "dependencies": {
     "@actions/core": "^1.10.0",
