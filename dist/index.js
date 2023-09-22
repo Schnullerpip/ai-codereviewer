@@ -57,18 +57,24 @@ const configuration = new openai_1.Configuration({
 });
 const openai = new openai_1.OpenAIApi(configuration);
 const systemPrompt = `You are an expert software engineer specialized in doing code reviews. Complete every element of the array.
-Your task is to code review pull requests. Instructions:
+Your task is to code review pull requests. You concentrate on reviewing semantic errors, bugs, performance issues, security risks,
+ best practices and code style. You are not responsible for testing the code or commenting on
+possible errors that a typesystem or a build process would detect anyway. 
+ Instructions:
 - Provide the response in following JSON format:  {"lineNumber":  <line_number>, "reviewComment": "<review comment>", "importance":<importance_ranking>};;;
-- The importance_ranking is a number between 1 and 5, where 5 is the most important and 1 is the least important.
-- Do not give positive comments or compliments.
-- Do not suggest renamings
+- The importance_ranking is a number between 1 and 20, where 20 means major issue (e.g. security risk) and 1 means optional change (e.g. a variable name has been changed is everything still working?).
 - Focus on logic errors, bugs, performance and control flow readability only.
 - Provide comments and suggestions ONLY if there is something to improve, otherwise return an empty array.
 - Write the comment in GitHub Markdown format.
+- Start the comment with a category name that best fits the idea of the comment, e.g.: "Security Risk: <rest of comment>".
 - Use the given description only for the overall context and only comment the code.
-- IMPORTANT: NEVER suggest adding comments to the code.
-- don't comment on versions e.g. libraries, dependencies because your training data is limited.
+- don't comment on versions e.g. libraries, dependencies because your training data is limited and probably outdated.
 - don't just assume that something has been forgotten.
+- IMPORTANT: Do not give positive comments or compliments.
+- IMPORTANT: NEVER suggest to make sure that some change won't break something.
+- IMPORTANT: NEVER suggest adding comments to the code.
+
+E.G.:
 
 Pull request title: feat/improve performance
 Pull request description: 
@@ -210,14 +216,15 @@ function getAIResponse(prompts) {
     });
 }
 function createComments(file, aiResponses) {
-    return aiResponses.flatMap((aiResponse) => {
+    return aiResponses
+        .flatMap((aiResponse) => {
         var _a;
         if (!file.to) {
             return undefined;
         }
         const line = Number(aiResponse.lineNumber);
         if (Number.isNaN(line)) {
-            console.log('[AICODEREVIEWER]::CERATECOMMENTS::', aiResponse.lineNumber, 'is not a number');
+            console.warn('[AICODEREVIEWER]::CERATECOMMENTS::', aiResponse.lineNumber, 'is not a number');
             return undefined;
         }
         return {
@@ -226,7 +233,8 @@ function createComments(file, aiResponses) {
             line,
             importance: (_a = aiResponse.importance) !== null && _a !== void 0 ? _a : 1,
         };
-    }).filter((c) => c !== undefined);
+    })
+        .filter((c) => c !== undefined);
 }
 function createReview(owner, repo, pull_number, comments) {
     return __awaiter(this, void 0, void 0, function* () {
@@ -282,9 +290,19 @@ function main() {
         if (comments.length <= 0) {
             return;
         }
-        const commentsSortedByImportanceDesc = comments.sort((a, b) => b.importance - a.importance);
-        const commentsCapped = commentsSortedByImportanceDesc.slice(0, 15);
-        const commentsForOctokit = commentsCapped.map((c) => ({
+        let highestImportance = 0;
+        const commentsSortedByImportanceDesc = comments.sort((a, b) => {
+            if (a.importance > highestImportance) {
+                highestImportance = a.importance;
+            }
+            return b.importance - a.importance;
+        });
+        const nextHighestImportantIdx = commentsSortedByImportanceDesc.findIndex((c) => c.importance < highestImportance);
+        const highImportanceCommentsOnly = commentsSortedByImportanceDesc.filter((c) => c.importance === highestImportance);
+        const nextHighestCommentsLimited = commentsSortedByImportanceDesc.slice(nextHighestImportantIdx, nextHighestImportantIdx + 3);
+        const commentsForOctokit = highImportanceCommentsOnly
+            .concat(nextHighestCommentsLimited)
+            .map((c) => ({
             body: c.body,
             path: c.path,
             line: c.line,
