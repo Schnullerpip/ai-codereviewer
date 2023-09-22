@@ -231,7 +231,7 @@ function createComments(
 
     const line = Number(aiResponse.lineNumber)
     if(Number.isNaN(line)) {
-      console.log('[AICODEREVIEWER]::CERATECOMMENTS::', aiResponse.lineNumber, 'is not a number' )
+      console.warn('[AICODEREVIEWER]::CERATECOMMENTS::', aiResponse.lineNumber, 'is not a number' )
       return undefined
     }
 
