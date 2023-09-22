@@ -18,18 +18,24 @@ const configuration = new Configuration({
 const openai = new OpenAIApi(configuration);
 
 const systemPrompt = `You are an expert software engineer specialized in doing code reviews. Complete every element of the array.
-Your task is to code review pull requests. Instructions:
+Your task is to code review pull requests. You concentrate on reviewing semantic errors, bugs, performance issues, security risks,
+ best practices and code style. You are not responsible for testing the code or commenting on
+possible errors that a typesystem or a build process would detect anyway. 
+ Instructions:
 - Provide the response in following JSON format:  {"lineNumber":  <line_number>, "reviewComment": "<review comment>", "importance":<importance_ranking>};;;
-- The importance_ranking is a number between 1 and 5, where 5 is the most important and 1 is the least important.
-- Do not give positive comments or compliments.
-- Do not suggest renamings
+- The importance_ranking is a number between 1 and 20, where 20 means major issue (e.g. security risk) and 1 means optional change (e.g. a variable name has been changed is everything still working?).
 - Focus on logic errors, bugs, performance and control flow readability only.
 - Provide comments and suggestions ONLY if there is something to improve, otherwise return an empty array.
 - Write the comment in GitHub Markdown format.
+- Start the comment with a category name that best fits the idea of the comment, e.g.: "Security Risk: <rest of comment>".
 - Use the given description only for the overall context and only comment the code.
-- IMPORTANT: NEVER suggest adding comments to the code.
-- don't comment on versions e.g. libraries, dependencies because your training data is limited.
+- don't comment on versions e.g. libraries, dependencies because your training data is limited and probably outdated.
 - don't just assume that something has been forgotten.
+- IMPORTANT: Do not give positive comments or compliments.
+- IMPORTANT: NEVER suggest to make sure that some change won't break something.
+- IMPORTANT: NEVER suggest adding comments to the code.
+
+E.G.:
 
 Pull request title: feat/improve performance
 Pull request description: 
@@ -192,9 +198,7 @@ async function getAIResponse(prompts: Array<string>): Promise<
 
   console.log('[AICODEREVIEWER::OPENAI::RESPONSE]::"', response.data.choices[0].message?.content, '"');
 
-  const res = response.data.choices[0].message?.content
-    ?.trim()
-    .split(";;;");
+  const res = response.data.choices[0].message?.content?.trim().split(";;;");
 
   if (!res) {
     console.log("[AICODEREVIEWER::]::Response not interpretable. ", res);
@@ -210,8 +214,7 @@ async function getAIResponse(prompts: Array<string>): Promise<
 
   try {
     return res.map((r) => JSON.parse(r));
-  }
-  catch (e) {
+  } catch (e) {
     return []
   }
 }
@@ -224,24 +227,35 @@ function createComments(
     importance: number;
   }>
 ): Array<{ body: string; path: string; line: number; importance: number }> {
-  return aiResponses.flatMap((aiResponse) => {
-    if (!file.to) {
-      return undefined;
-    }
+  return aiResponses
+    .flatMap((aiResponse) => {
+      if (!file.to) {
+        return undefined;
+      }
 
-    const line = Number(aiResponse.lineNumber)
-    if(Number.isNaN(line)) {
-      console.warn('[AICODEREVIEWER]::CERATECOMMENTS::', aiResponse.lineNumber, 'is not a number' )
-      return undefined
-    }
+      const line = Number(aiResponse.lineNumber)
+      if (Number.isNaN(line)) {
+        console.warn(
+          '[AICODEREVIEWER]::CERATECOMMENTS::',
+          aiResponse.lineNumber,
+          'is not a number'
+        )
+        return undefined
+      }
 
-    return {
-      body: '[AI_REVIEWER]::' +  aiResponse.reviewComment,
-      path: file.to,
-      line,
-      importance: aiResponse.importance ?? 1,
-    };
-  }).filter((c) => c !== undefined) as Array<{ body: string; path: string; line: number; importance: number }>;
+      return {
+        body: '[AI_REVIEWER]::' + aiResponse.reviewComment,
+        path: file.to,
+        line,
+        importance: aiResponse.importance ?? 1,
+      }
+    })
+    .filter((c) => c !== undefined) as Array<{
+    body: string;
+    path: string;
+    line: number;
+    importance: number;
+  }>
 }
 
 async function createReview(
