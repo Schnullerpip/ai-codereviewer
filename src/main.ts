@@ -329,16 +329,33 @@ async function main() {
     return;
   }
 
-  const commentsSortedByImportanceDesc = comments.sort(
-    (a, b) => b.importance - a.importance
+  let highestImportance = 0
+  const commentsSortedByImportanceDesc = comments.sort((a, b) => {
+    if (a.importance > highestImportance) {
+      highestImportance = a.importance
+    }
+    return b.importance - a.importance
+  });
+
+  const nextHighestImportantIdx = commentsSortedByImportanceDesc.findIndex(
+    (c) => c.importance < highestImportance
   );
-  const commentsCapped = commentsSortedByImportanceDesc.slice(0, 15);
-  const commentsForOctokit = commentsCapped.map((c) => ({
-    body: c.body,
-    path: c.path,
-    line: c.line,
-    //no importance
-  }))
+  const highImportanceCommentsOnly = commentsSortedByImportanceDesc.filter(
+    (c) => c.importance === highestImportance
+  );
+  const nextHighestCommentsLimited = commentsSortedByImportanceDesc.slice(
+    nextHighestImportantIdx,
+    nextHighestImportantIdx + 3
+  )
+
+  const commentsForOctokit = highImportanceCommentsOnly
+    .concat(nextHighestCommentsLimited)
+    .map((c) => ({
+      body: c.body,
+      path: c.path,
+      line: c.line,
+      //no importance
+    }))
 
   await createReview(
     prDetails.owner,
