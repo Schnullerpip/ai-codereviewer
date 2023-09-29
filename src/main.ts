@@ -350,7 +350,7 @@ async function main() {
   )
 
   const commentsForOctokit = highImportanceCommentsOnly
-    .concat(nextHighestCommentsLimited)
+    .concat(highImportanceCommentsOnly.length < 5 ? nextHighestCommentsLimited: [])
     .map((c) => ({
       body: c.body,
       path: c.path,
