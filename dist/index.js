@@ -302,7 +302,7 @@ function main() {
         const highImportanceCommentsOnly = commentsSortedByImportanceDesc.filter((c) => c.importance === highestImportance);
         const nextHighestCommentsLimited = commentsSortedByImportanceDesc.slice(nextHighestImportantIdx, nextHighestImportantIdx + 3);
         const commentsForOctokit = highImportanceCommentsOnly
-            .concat(nextHighestCommentsLimited)
+            .concat(highImportanceCommentsOnly.length < 5 ? nextHighestCommentsLimited : [])
             .map((c) => ({
             body: c.body,
             path: c.path,
